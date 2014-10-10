@@ -22,31 +22,37 @@ consume tv st =
     st { tcEnv = env' }
 
 -- Context Difference Operation
-contextDiff :: TCEnv -> TCEnv -> TCEnv
+contextDiff :: TCEnv -> [TyVar] -> TCEnv
 contextDiff e1 [] = e1
-contextDiff _ _ = undefined
+contextDiff e1 e2 = foldr (\x acc -> removeVar x acc) e1 e2
+  where removeVar :: TyVar -> TCEnv -> TCEnv
+        removeVar _ [] = []
+        removeVar v ((n, t) : xs)
+          | v == n =
+            if isUnlimitedType t then xs
+            else error $ "Linear type " ++ v ++ " in context diff operation"
+          | otherwise = (n, t) : (removeVar v xs)
 
-
-{- type TC a = ExceptT String (State TCState) a -}
-type TC a = TCState -> Either String a
-
-err = Left
-
+  -- Check:
+  -- * That the variables we are trying to remove are nonlinear
+  -- * Something about not being in the domain?
+  {- type TC a = ExceptT String (State TCState) a -}
+type TC a = TCState -> a
 
 -- Duality function on types. Partial!
-tyDual :: Ty -> Either String Ty
-tyDual (TyQual q pt) = Right $ TyQual q (preTyDual pt)
+tyDual :: Ty -> Ty
+tyDual (TyQual q pt) = TyQual q (preTyDual pt)
   where preTyDual :: Pretype -> Pretype
         preTyDual (TyRecv t1 t2) = TySend t1 (tyDual t2)
         preTyDual (TySend t1 t2) = TyRecv t1 (tyDual t2)
         preTyDual (TySelect xs) = TyBranch (map (\ (l, t) -> (l, (tyDual t))) xs)
         preTyDual (TyBranch xs) = TySelect (map (\ (l, t) -> (l, (tyDual t))) xs)
-tyDual TyEnd = Right TyEnd
-tyDual t = Left $ "Duality undefined for type " ++ (show t)
+tyDual TyEnd = TyEnd
+tyDual t = error $ "Duality undefined for type " ++ (show t)
 
 
 typeCheckVal :: Value -> TC (Ty, TCState)
-typeCheckVal (VBool _) st = TyBool
+typeCheckVal (VBool _) st = (TyBool, st)
 typeCheckVal (Variable name) st =
     case lookup name (tcEnv st) of
       Just ty ->
@@ -54,8 +60,8 @@ typeCheckVal (Variable name) st =
           (ty, st)
         else
           (ty, (consume name st))
-      Nothing -> err $ "Unbound type variable " ++ name
+      Nothing -> error $ "Unbound type variable " ++ name
 
 typeCheck :: Process -> TC Ty
-typeCheck Inaction = return TyEnd
--- typeCheck 
+typeCheck Inaction _ = TyEnd
+-- typeCheck
